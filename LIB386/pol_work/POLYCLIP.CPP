@@ -1,5 +1,24 @@
 #include <POLYGON/CLIPPERZ.H>
 #include <fenv.h>
+
+#if defined(LBA2_TARGET_DREAMCAST) && !defined(FE_TOWARDZERO)
+// SH4 FPSCR.RM shim — see POLY.CPP for rationale.
+#undef fegetround
+#undef fesetround
+#define FE_TONEAREST  0
+#define FE_TOWARDZERO 1
+static inline unsigned long lba2_fpscr_get(void) {
+    unsigned long v;
+    __asm__ volatile("sts fpscr, %0" : "=r"(v));
+    return v;
+}
+static inline void lba2_fpscr_set(unsigned long v) {
+    __asm__ volatile("lds %0, fpscr" : : "r"(v));
+}
+#define fegetround()  ((int)(lba2_fpscr_get() & 0x3))
+#define fesetround(m) (lba2_fpscr_set((lba2_fpscr_get() & ~0x3UL) | ((unsigned long)(m) & 0x3)), 0)
+#endif
+
 #include <SYSTEM/DEBUG_TRACES.H>
 
 /* ASM Clipping_ZFPU sets the x87 FPU to chop (truncate-toward-zero) rounding

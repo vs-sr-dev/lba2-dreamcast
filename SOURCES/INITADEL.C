@@ -138,12 +138,15 @@ void InitAdeline(S32 argc, char *argv[]) {
 
     // ··········································································
     //  CMDLINE
+    LBA2_DC_TRACE_PUTS("[DC-TRACE] before GetCmdLine");
     GetCmdLine(argc, argv);
+    LBA2_DC_TRACE_PUTS("[DC-TRACE] after GetCmdLine");
 
     // ··········································································
     //  OS
     LogPuts("\nIdentifying Operating System. Please wait...\n");
     DisplayOS();
+    LBA2_DC_TRACE_PUTS("[DC-TRACE] after DisplayOS");
 
     // ··········································································
     //  CPU
@@ -160,24 +163,30 @@ void InitAdeline(S32 argc, char *argv[]) {
     // ··········································································
     //  AIL API init (for vmm_lock/timer)
 
+    LBA2_DC_TRACE_PUTS("[DC-TRACE] before InitAIL");
     InitAIL(); // TODO: Reorganize/reposition closer to sound subsystem
+    LBA2_DC_TRACE_PUTS("[DC-TRACE] after InitAIL");
 
     // --- VIDEO
     // -------------------------------------------------------------------
 
     LogPuts("\nInitialising Video. Please wait...\n");
 
+    LBA2_DC_TRACE_PUTS("[DC-TRACE] before InitVideo");
     if (!InitVideo()) {
         exit(1); // TODO: Implement graceful exit
     }
+    LBA2_DC_TRACE_PUTS("[DC-TRACE] after InitVideo, before InitScreen");
 
     if (!InitScreen()) {
         exit(1); // TODO: Implement graceful exit
     }
+    LBA2_DC_TRACE_PUTS("[DC-TRACE] after InitScreen, before InitGraphics");
 
     if (!InitGraphics(RESOLUTION_X, RESOLUTION_Y)) {
         exit(1); // TODO: Implement graceful exit
     }
+    LBA2_DC_TRACE_PUTS("[DC-TRACE] after InitGraphics");
 
     // ··········································································
     //  Midi device

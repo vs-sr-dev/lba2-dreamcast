@@ -7,8 +7,12 @@
 #include <SYSTEM/LIMITS.H>
 #include <SYSTEM/LOGPRINT.H>
 
+#ifdef LBA2_TARGET_DREAMCAST
+#include <SYSTEM/dc_sdl_compat.h>
+#else
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_filesystem.h>
+#endif
 
 #include <dirent.h>
 
@@ -236,6 +240,16 @@ extern "C" {
 #endif
 
 bool ResolveGameDataDir(char *outDir, U16 outMax, int *argc, char **argv) {
+#ifdef LBA2_TARGET_DREAMCAST
+    // KOS: assets are always at /cd/ (mounted CD-ROM root). Skip the host-style
+    // candidate walk — KOS' vfs root `/` contains pseudo-mounts (`dev`, `pty`)
+    // that confuse the sibling scan, and stat("/cd/") with trailing slash is
+    // unreliable on ISO9660. Just point the engine at /cd/.
+    (void)argc; (void)argv;
+    strncpy(outDir, "/cd/", outMax);
+    outDir[outMax - 1] = '\0';
+    return true;
+#else
     char tried[kMaxTried][ADELINE_MAX_PATH];
     int triedCount = 0;
     char cliPath[ADELINE_MAX_PATH];
@@ -339,6 +353,7 @@ bool ResolveGameDataDir(char *outDir, U16 outMax, int *argc, char **argv) {
 
     LogFailure(tried, triedCount);
     return false;
+#endif // LBA2_TARGET_DREAMCAST
 }
 
 #ifdef __cplusplus

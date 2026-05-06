@@ -13,6 +13,7 @@
 #include <SVGA/SCREEN.H>
 #include <SYSTEM/KEYBOARD_KEYS.H>
 #include "FOLLOWCAM_CFG.H"
+#include <SYSTEM/LOGPRINT.H>
 #include <SYSTEM/STRING.H>
 #include <SYSTEM/WINDOW.H>
 
@@ -20,8 +21,12 @@
 static inline U32 DosAvailableMem(void) { return 0; }
 #endif
 
+#ifdef LBA2_TARGET_DREAMCAST
+#include <SYSTEM/dc_sdl_compat.h>
+#else
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
+#endif
 #include <ctype.h>
 #include <dirent.h>
 #include <stdio.h>
@@ -1959,6 +1964,15 @@ void ReadConfigFile(void) {
     if (DetailLevel > MAX_DETAIL_LEVEL)
         DetailLevel = MAX_DETAIL_LEVEL;
 
+#ifdef LBA2_TARGET_DREAMCAST
+    // Embedded SOURCES/LBA2.CFG ships with DetailLevel: 1 (era-appropriate
+    // 486-class default). On DC we want full effects (rain, horizon cubes,
+    // animated water) since the SH4+PVR2 sw-rasterizer + Adeline pipeline
+    // hits 60fps comfortably and the storm intro is a defining visual of
+    // LBA2's opening. User can still lower via the in-game options menu.
+    DetailLevel = MAX_DETAIL_LEVEL;
+#endif
+
     VideoFullScreen = DefFileBufferReadValueDefault("FullScreen", TRUE);
 
     if (VideoFullScreen < 0 OR VideoFullScreen > 1)
@@ -2257,6 +2271,18 @@ int main(int argc, char *argv[]) {
     U8 *ptrdos4gw;
     char tmpFilePath[ADELINE_MAX_PATH];
 
+#ifdef LBA2_TARGET_DREAMCAST
+    // KOS doesn't always populate argc/argv the way glibc + SDL_main does.
+    // GetCmdLine in CMDLINE.CPP does `argc - 1` then memcpy with the result
+    // promoted to size_t — argc=0 silently turns into a 4 GB memcpy and hangs.
+    // Synthesize a minimal valid argv so the rest of the engine runs untouched.
+    static char *kDcArgv[1] = { (char *)"lba2.elf" };
+    if (argc < 1 || argv == NULL) {
+        argc = 1;
+        argv = kDcArgv;
+    }
+#endif
+
 #ifdef DEBUG_TOOLS
     MemoMemory = AvailableMem();       // memory at start
     MemoDosMemory = DosAvailableMem(); // Dos memory at start
@@ -2448,21 +2474,27 @@ int main(int argc, char *argv[]) {
     Cls();
 #endif
 
+    LBA2_DC_TRACE("[DC-TRACE] before InitDial(2) - VOX file load\n");
     InitDial(2); // on s'assure que FR_GAM.VOX soit sur le Disque Dur
 
+    LBA2_DC_TRACE("[DC-TRACE] before Init3DExt\n");
     Init3DExt();
 
+    LBA2_DC_TRACE("[DC-TRACE] before Load_HQR(BufferFile3D)\n");
     // a Faire Imperativement avant LoadFicPerso() !!!!!!!!
     GetResPath(tmpFilePath, ADELINE_MAX_PATH, RESS_HQR_NAME);
     if (!Load_HQR(tmpFilePath, BufferFile3D, RESS_FILE3D))
         TheEndCheckFile(tmpFilePath);
 
+    LBA2_DC_TRACE("[DC-TRACE] before LoadFicPerso\n");
     LoadFicPerso();
+    LBA2_DC_TRACE("[DC-TRACE] before InitObjects\n");
     InitObjects(BufferAnim, SIZE_BUFFER_ANIM, GivePtrBody, GivePtrAnim);
 
     //-------------------   load ressources diverses
 
     // Textures inventaire, médaillon, etc... (256x256)
+    LBA2_DC_TRACE("[DC-TRACE] before LoadMalloc_HQR(RESS_TEXTURES)\n");
     GetResPath(tmpFilePath, ADELINE_MAX_PATH, RESS_HQR_NAME);
     BufferTexture = (U8 *)LoadMalloc_HQR(tmpFilePath, RESS_TEXTURES);
     if (!BufferTexture)
@@ -2471,6 +2503,7 @@ int main(int argc, char *argv[]) {
     ScanTextureAnimation(BufferTexture, 256);
     InitTextureAnimation(); // pour initialiser l'affaire
 
+    LBA2_DC_TRACE("[DC-TRACE] before LoadMalloc_HQR(RESS_GOODIES_GPC)\n");
     GetResPath(tmpFilePath, ADELINE_MAX_PATH, RESS_HQR_NAME);
     PtrZvExtra = (S16 *)LoadMalloc_HQR(tmpFilePath, RESS_GOODIES_GPC);
     if (!PtrZvExtra)
@@ -2482,11 +2515,14 @@ int main(int argc, char *argv[]) {
         TheEndCheckFile(tmpFilePath);
 
 #ifndef DEMO
+    LBA2_DC_TRACE("[DC-TRACE] before LoadMalloc_HQR(RESS_ANIM3DS_GPC)\n");
     GetResPath(tmpFilePath, ADELINE_MAX_PATH, RESS_HQR_NAME);
     PtrZvAnim3DS = (S16 *)LoadMalloc_HQR(tmpFilePath, RESS_ANIM3DS_GPC);
     if (!PtrZvAnim3DS)
         TheEndCheckFile(tmpFilePath);
 #endif
+
+    LBA2_DC_TRACE("[DC-TRACE] before HQR_Init sprites/anim3ds/animations\n");
 
     //-------------------   buffer sprites
 
@@ -2664,7 +2700,9 @@ int main(int argc, char *argv[]) {
     HERCULE(HCls());
 #endif
 
+    LBA2_DC_TRACE("[DC-TRACE] entering MainGameMenu (load=%d)\n", (int)load);
     MainGameMenu(load);
+    LBA2_DC_TRACE("[DC-TRACE] returned from MainGameMenu\n");
 
 #ifdef DEMO
     if (!FlagShowEndDemo) {

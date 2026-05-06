@@ -18,6 +18,25 @@
 #include <stdio.h>
 #include <fenv.h>
 
+#if defined(LBA2_TARGET_DREAMCAST) && !defined(FE_TOWARDZERO)
+// KOS newlib for SH4 doesn't expose FE_TOWARDZERO; emulate via FPSCR.RM
+// (bits [0:1]: 00 = round-to-nearest, 01 = round-toward-zero).
+#undef fegetround
+#undef fesetround
+#define FE_TONEAREST  0
+#define FE_TOWARDZERO 1
+static inline unsigned long lba2_fpscr_get(void) {
+    unsigned long v;
+    __asm__ volatile("sts fpscr, %0" : "=r"(v));
+    return v;
+}
+static inline void lba2_fpscr_set(unsigned long v) {
+    __asm__ volatile("lds %0, fpscr" : : "r"(v));
+}
+#define fegetround()  ((int)(lba2_fpscr_get() & 0x3))
+#define fesetround(m) (lba2_fpscr_set((lba2_fpscr_get() & ~0x3UL) | ((unsigned long)(m) & 0x3)), 0)
+#endif
+
 // -----------------------------------------------------------------------------
 #ifdef __cplusplus
 extern "C" {

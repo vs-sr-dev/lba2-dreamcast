@@ -5,8 +5,12 @@
 #include <SYSTEM/LIMITS.H>
 #include <SYSTEM/LOGPRINT.H>
 
+#ifdef LBA2_TARGET_DREAMCAST
+#include <SYSTEM/dc_sdl_compat.h>
+#else
 #include <SDL3/SDL_filesystem.h>
 #include <SDL3/SDL_stdinc.h>
+#endif
 
 #include <assert.h>
 #include <stdlib.h>
