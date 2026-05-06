@@ -18,6 +18,20 @@
 #include "smk_bitstream.h"
 #include "smk_hufftree.h"
 
+#ifdef LBA2_TARGET_DREAMCAST
+/* V2.7.3 frame arena storage. */
+unsigned char  smk_arena_buf[SMK_ARENA_BYTES] __attribute__((aligned(8)));
+unsigned long  smk_arena_off = 0u;
+int            smk_arena_active = 0;
+
+/* V2.7.5 internal timing — accumulated across frames, read+reset by PLAYACF.
+ * Lets the engine break smk_render time into IO vs decode. */
+#include <arch/timer.h>
+unsigned long smk_dbg_io_us  = 0;
+unsigned long smk_dbg_dec_us = 0;
+unsigned long smk_dbg_skip_seek = 0;
+#endif
+
 /* GLOBALS */
 /* tree processing order */
 #define SMK_TREE_MMAP	0
@@ -1221,6 +1235,14 @@ static char smk_render(smk s)
 	/* sanity check */
 	smk_assert(s);
 
+#ifdef LBA2_TARGET_DREAMCAST
+	/* V2.7.3: enable the frame arena for the duration of this render call.
+	 * All smk_malloc inside (chunk buffer, huff trees, bitstreams) bumps from
+	 * the static pool; smk_free is a no-op for arena pointers. Disabled at
+	 * exit so the open/close paths still use real calloc. */
+	smk_arena_reset();
+#endif
+
 	/* Retrieve current chunk_size for this frame. */
 	if (!(i = s->chunk_size[s->cur_frame]))
 	{
@@ -1230,6 +1252,34 @@ static char smk_render(smk s)
 
 	if (s->mode == SMK_MODE_DISK)
 	{
+#ifdef LBA2_TARGET_DREAMCAST
+#  ifdef LBA2_DEBUG_PERF
+		uint64_t io_t0 = timer_us_gettime64();
+#  endif
+		/* V2.7.5: skip the fseek when the file pointer is already at the
+		 * target offset. libsmacker calls fseek(SEEK_SET) unconditionally
+		 * every frame; KOS newlib stdio doesn't optimize "seek to current
+		 * position" so the call invalidates the 64 KB read-ahead buffer
+		 * we set up via setvbuf, forcing a fresh CD read every frame. For
+		 * sequential playback the chunk_offset is exactly where ftell
+		 * already is, so the fseek is pure cost. Verify and skip. */
+		long curPos = ftell(s->source.file.fp);
+		if (curPos != (long)s->source.file.chunk_offset[s->cur_frame])
+		{
+			if (fseek(s->source.file.fp,s->source.file.chunk_offset[s->cur_frame],SEEK_SET))
+			{
+				fprintf(stderr,"libsmacker::smk_render(s) - ERROR: fseek to frame %lu (offset %lu) failed.\n",s->cur_frame,s->source.file.chunk_offset[s->cur_frame]);
+				perror ("\tError reported was");
+				goto error;
+			}
+		}
+		else
+		{
+#  ifdef LBA2_DEBUG_PERF
+			smk_dbg_skip_seek++;
+#  endif
+		}
+#else
 		/* Skip to frame in file */
 		if (fseek(s->source.file.fp,s->source.file.chunk_offset[s->cur_frame],SEEK_SET))
 		{
@@ -1237,6 +1287,7 @@ static char smk_render(smk s)
 			perror ("\tError reported was");
 			goto error;
 		}
+#endif
 
 		/* In disk-streaming mode: make way for our incoming chunk buffer */
 		smk_malloc(buffer, i);
@@ -1247,6 +1298,9 @@ static char smk_render(smk s)
 			fprintf(stderr,"libsmacker::smk_render(s) - ERROR: frame %lu (offset %lu): smk_read had errors.\n",s->cur_frame,s->source.file.chunk_offset[s->cur_frame]);
 			goto error;
 		}
+#if defined(LBA2_TARGET_DREAMCAST) && defined(LBA2_DEBUG_PERF)
+		smk_dbg_io_us += (unsigned long)(timer_us_gettime64() - io_t0);
+#endif
 	}
 	else
 	{
@@ -1260,6 +1314,10 @@ static char smk_render(smk s)
 	}
 
 	p = buffer;
+
+#if defined(LBA2_TARGET_DREAMCAST) && defined(LBA2_DEBUG_PERF)
+	uint64_t dec_t0 = timer_us_gettime64();
+#endif
 
 	/* Palette record first */
 	if (s->frame_type[s->cur_frame] & 0x01)
@@ -1329,6 +1387,12 @@ static char smk_render(smk s)
 		smk_free(buffer);
 	}
 
+#ifdef LBA2_TARGET_DREAMCAST
+#  ifdef LBA2_DEBUG_PERF
+	smk_dbg_dec_us += (unsigned long)(timer_us_gettime64() - dec_t0);
+#  endif
+	smk_arena_disable();
+#endif
 	return 0;
 
 error:
@@ -1338,6 +1402,9 @@ error:
 		smk_free(buffer);
 	}
 
+#ifdef LBA2_TARGET_DREAMCAST
+	smk_arena_disable();
+#endif
 	return -1;
 }
 

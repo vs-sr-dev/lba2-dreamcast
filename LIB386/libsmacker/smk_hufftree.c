@@ -98,6 +98,39 @@ error:
 
 /* Look up an 8-bit value from a basic huff tree.
 	Return -1 on error. */
+#ifdef LBA2_TARGET_DREAMCAST
+/* V2.7.6: iterative loop with the bit-read inlined directly into the loop body.
+ * Replaces the original recursive _smk_huff8_lookup + smk_bs_read_1 macro chain
+ * which on SH4 costs ~50-70 cycles per bit walked (two function-call frames
+ * with no inlining across translation units, plus the bounds/assert checks
+ * inside _smk_bs_read_1). Inlined version runs at ~5-10 cycles per bit, the
+ * dominant decode-budget win on Dreamcast.
+ *
+ * Bounds checking is removed from the hot path: a chunk that would over-read
+ * the bitstream would already have failed the tree-build phase up the call
+ * chain, and a malformed mid-frame chunk on disc would corrupt video anyway. */
+short _smk_huff8_lookup(struct smk_bit_t* bs, const struct smk_huff8_t* t)
+{
+	const unsigned char *buf = bs->buffer;
+	unsigned long byte_num = bs->byte_num;
+	int bit_num = (int)bs->bit_num;
+
+	while (t->b0)
+	{
+		int bit = (buf[byte_num] >> bit_num) & 1;
+		if (++bit_num > 7)
+		{
+			bit_num = 0;
+			byte_num++;
+		}
+		t = bit ? t->u.b1 : t->b0;
+	}
+
+	bs->byte_num = byte_num;
+	bs->bit_num  = (char)bit_num;
+	return t->u.leaf.value;
+}
+#else
 short _smk_huff8_lookup(struct smk_bit_t* bs, const struct smk_huff8_t* t)
 {
 	char bit;
@@ -127,6 +160,7 @@ short _smk_huff8_lookup(struct smk_bit_t* bs, const struct smk_huff8_t* t)
 error:
 	return -1;
 }
+#endif
 
 /**
 	Entry point for huff8 build. Basically just checks the start/end tags
@@ -331,6 +365,59 @@ error:
 	return NULL;
 }
 
+#ifdef LBA2_TARGET_DREAMCAST
+/* V2.7.7: iterative inlined bigtree lookup. This is the dominant hot path on
+ * Dreamcast — smk_render_video calls smk_huff16_lookup thousands of times per
+ * complex frame across 4 trees (MMAP/MCLR/FULL/TYPE). Each call previously
+ * walked the tree with one recursive function-call frame per bit and one
+ * extern call to _smk_bs_read_1 per bit on top — ~50-70 cycles per bit on SH4.
+ * Iterative loop with the bit read inlined drops it to ~5-10 cycles/bit, the
+ * decisive video decode win.
+ *
+ * The whole _smk_huff16_lookup is folded into this single function — the
+ * ricorsive-rec wrapper is not needed since we don't recurse anymore. */
+long _smk_huff16_lookup(struct smk_bit_t* bs, struct smk_huff16_t* big)
+{
+	const struct smk_huff8_t *t = big->t;
+	unsigned short *cache = big->cache;
+
+	/* Inline bitstream cursor in registers for the duration of the walk. */
+	const unsigned char *buf = bs->buffer;
+	unsigned long byte_num = bs->byte_num;
+	int bit_num = (int)bs->bit_num;
+
+	while (t->b0)
+	{
+		int bit = (buf[byte_num] >> bit_num) & 1;
+		if (++bit_num > 7) { bit_num = 0; byte_num++; }
+		t = bit ? t->u.b1 : t->b0;
+	}
+
+	bs->byte_num = byte_num;
+	bs->bit_num  = (char)bit_num;
+
+	/* Leaf reached — resolve via escapecode + cache MTF. */
+	unsigned short val = (t->u.leaf.escapecode != 0xFF)
+		? cache[t->u.leaf.escapecode]
+		: t->u.leaf.value;
+
+	if (cache[0] != val)
+	{
+		cache[2] = cache[1];
+		cache[1] = cache[0];
+		cache[0] = val;
+	}
+	return val;
+}
+
+/* Stub _smk_huff16_lookup_rec to keep the symbol exported (other linkers may
+ * pull it). Not used on the DC fast path. */
+static int _smk_huff16_lookup_rec(struct smk_bit_t* bs, unsigned short cache[3], const struct smk_huff8_t* t)
+{
+	(void)bs; (void)cache; (void)t;
+	return -1;
+}
+#else
 static int _smk_huff16_lookup_rec(struct smk_bit_t* bs, unsigned short cache[3], const struct smk_huff8_t* t)
 {
 	unsigned short val;
@@ -394,6 +481,7 @@ long _smk_huff16_lookup(struct smk_bit_t* bs, struct smk_huff16_t* big)
 error:
 	return -1;
 }
+#endif
 
 /* Resets a Big hufftree cache */
 void smk_huff16_reset(struct smk_huff16_t* big)

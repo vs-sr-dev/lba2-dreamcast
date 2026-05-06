@@ -12,8 +12,25 @@
 #ifndef SMK_BITSTREAM_H
 #define SMK_BITSTREAM_H
 
+#ifdef LBA2_TARGET_DREAMCAST
+/* V2.7.6: expose the bitstream layout so hufftree.c can inline the bit-read
+ * in its hot lookup loop. The original libsmacker keeps this private and goes
+ * through a function call per bit (_smk_bs_read_1) — on SH4 with no inlining
+ * across translation units that costs ~30 cycles per bit on top of a similar
+ * recursive call into _smk_huff8_lookup. Inlining directly into a loop turns
+ * the per-bit cost from ~50-70 cycles to ~5-10 cycles, the dominant win for
+ * frame decode budget. */
+struct smk_bit_t
+{
+	const unsigned char* buffer;
+	unsigned long size;
+	unsigned long byte_num;
+	char bit_num;
+};
+#else
 /** Bitstream structure, Forward declaration */
 struct smk_bit_t;
+#endif
 
 /* BITSTREAM Functions */
 /** Initialize a bitstream */

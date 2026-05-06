@@ -18,7 +18,10 @@
 	Bitstream structure
 	Pointer to raw block of data and a size limit.
 	Maintains internal pointers to byte_num and bit_number.
-*/
+	V2.7.6 (DC): the layout is now exposed in smk_bitstream.h to allow
+	hufftree.c to inline the bit read in its hot lookup loop. Definition
+	moved to header for the DC build; keep a private copy here for non-DC. */
+#ifndef LBA2_TARGET_DREAMCAST
 struct smk_bit_t
 {
 	const unsigned char* buffer;
@@ -27,6 +30,7 @@ struct smk_bit_t
 	unsigned long byte_num;
 	char bit_num;
 };
+#endif
 
 /* BITSTREAM Functions */
 struct smk_bit_t* smk_bs_init(const unsigned char* b, const unsigned long size)
