@@ -1,5 +1,7 @@
 # Little Big Adventure 2 - Engine source code - Community
 
+> **Dreamcast port:** this fork ports the engine to Sega Dreamcast via KallistiOS. See **[README-DC.md](README-DC.md)** for build instructions, controls, and known issues — and **[DEVLOG-DC.md](DEVLOG-DC.md)** for the porting journey. The README below is the upstream `lba2-classic-community` document, kept verbatim.
+
 Little Big Adventure 2 (aka Twinsen's Odyssey) is the sequel of Little Big Adventure (aka Relentless: Twinsen's Adventure) in 1997.
 
 We are releasing this code with preservation in mind, as this piece of work was exceptional for the time and we believe it can be a valuable source of education.

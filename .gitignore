@@ -10,6 +10,40 @@ build/
 /build_logs/
 .tmp/
 
+# Dreamcast port — out-of-source build dir + disc image output
+/build-dc/
+/build-cdi/
+*.cdi
+*.elf
+
+# Retail LBA2 game assets must NEVER be committed (copyrighted by Adeline / 2:21).
+# The only tracked .pal is the engine default palette; everything else is excluded.
+*.HQR
+*.hqr
+*.SMK
+*.smk
+*.OGG
+*.ogg
+*.VOX
+*.vox
+*.VOC
+*.voc
+*.OBL
+*.obl
+*.ILE
+*.ile
+# Allow the engine default palette but exclude any other .pal assets dropped in.
+*.pal
+*.PAL
+!SOURCES/CONFIG/PALETTE.PAL
+
+# VMU dumps and Dreamcast emulator save snapshots
+*.vmd
+*.VMD
+*.vmu
+*.VMU
+vmu_dump_*
+
 # Polyrec rendered outputs (keep .lba2polyrec fixtures, ignore generated images)
 tests/SNAPSHOT/fixtures/*.png
 tests/SNAPSHOT/fixtures/*.ppm
