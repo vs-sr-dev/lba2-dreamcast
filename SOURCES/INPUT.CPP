@@ -74,19 +74,37 @@ T_DEF_KEY GamepadKeys[MAX_INPUT];
 
 const T_DEF_KEY GamepadKeysDefault[MAX_INPUT] = {
     {K_GAMEPAD_RTRIGGER, 0},                      // 0  I_UP
-    {K_GAMEPAD_LTRIGGER, 0},                      // 1  I_DOWN
+    // V2.9.6 (DC): I_DOWN unbound from L trigger to avoid an I_JOY-trap in the
+    // Comportement menu. L trigger fires both I_COMPORTEMENT (open menu) AND
+    // I_DOWN (run backward) on DC because the JOYSTICK_DC_STUB mirrors the
+    // analog ltrig to both LSHOULDER and LTRIGGER virtual scancodes. The
+    // menu's wait-loop at COMPORTE.CPP:506 (`while (Input & I_JOY) ...`,
+    // I_JOY = I_UP|I_DOWN|I_LEFT|I_RIGHT) would never exit while L was held —
+    // the menu opened but DPad LEFT/RIGHT navigation never reached the main
+    // loop. Tradeoff: losing "run backward" via L trigger; player turns 180°
+    // and runs forward instead, which is standard tank-control idiom.
+    {0, 0},                                       // 1  I_DOWN (was K_GAMEPAD_LTRIGGER)
     {K_GAMEPAD_LSTICK_LEFT, 0},                   // 2  I_LEFT
     {K_GAMEPAD_LSTICK_RIGHT, 0},                  // 3  I_RIGHT
     {K_GAMEPAD_RSHOULDER, 0},                     // 4  I_THROW
     {K_GAMEPAD_LSHOULDER, 0},                     // 5  I_COMPORTEMENT
     {K_GAMEPAD_Y, 0},                             // 6  I_INVENTORY
     {K_GAMEPAD_X, 0},                             // 7  I_ACTION_M
-    {K_GAMEPAD_A, 0},                             // 8  I_ACTION_ALWAYS
-    {K_GAMEPAD_B, 0},                             // 9  I_RETURN
+    // V2.9.3 (DC): A button is now I_RETURN (engine name "Recentrage caméra"
+    // — it's the actual outdoor camera-recenter trigger, despite the unfortunate
+    // name). B is unbound from gameplay (it had been I_RETURN in V2.8 which
+    // conflated camera recenter with menu confirm; we want B exclusively for
+    // menu-close UX). Stick LEFT secondary kept so the engine still sees
+    // I_RETURN from the stick gesture even though A is the canonical key.
+    {K_GAMEPAD_DPAD_RIGHT, 0},                    // 8  I_ACTION_ALWAYS
+    {K_GAMEPAD_A, K_GAMEPAD_DPAD_LEFT},           // 9  I_RETURN — A button (camera recenter / engine "RETURN")
     {K_GAMEPAD_START, 0},                         // 10 I_MENUS
     {K_GAMEPAD_BACK, 0},                          // 11 I_HOLOMAP
     {0, 0},                                       // 12 I_PAUSE (unbound; Start opens the in-game menu)
-    {K_GAMEPAD_LSTICK_BTN, K_GAMEPAD_RSTICK_BTN}, // 13 I_ESQUIVE
+    // V2.9.5 (DC): I_ESQUIVE on B button. Original engine put it on stick-click
+    // which DC has no equivalent for; B was previously implicit-esquive via
+    // I_RETURN before V2.9.3 unbound it. Now B does the right semantic thing.
+    {K_GAMEPAD_B, 0},                             // 13 I_ESQUIVE (was K_GAMEPAD_LSTICK_BTN/RSTICK_BTN)
     {0, 0},                                       // 14 I_NORMAL
     {0, 0},                                       // 15 I_SPORTIF
     {0, 0},                                       // 16 I_AGRESSIF
@@ -95,8 +113,10 @@ const T_DEF_KEY GamepadKeysDefault[MAX_INPUT] = {
     {0, 0},                                       // 19 I_SAVE
     {0, 0},                                       // 20 I_LOAD
     {0, 0},                                       // 21 I_OPTIONS
-    {0, 0},                                       // 22 I_CAMERA (unbound; turn-camera pending auto-camera integration)
-    {K_GAMEPAD_RSTICK_UP, 0},                     // 23 I_CAMERA_LEVEL_PLUS
+    // V2.9.3 (DC): I_CAMERA (BACKSPACE on PC, secondary turn-camera function)
+    // unbound — the real outdoor camera-recenter is I_RETURN bound to A above.
+    {0, 0},                                       // 22 I_CAMERA
+    {K_GAMEPAD_RSTICK_UP, 0},                     // 23 I_CAMERA_LEVEL_PLUS (DC: unbound — no R-stick, sacrificed per user)
     {K_GAMEPAD_RSTICK_DOWN, 0},                   // 24 I_CAMERA_LEVEL_MOINS
     {0, 0},                                       // 25 I_WEAPON_1
     {0, 0},                                       // 26
@@ -105,10 +125,14 @@ const T_DEF_KEY GamepadKeysDefault[MAX_INPUT] = {
     {0, 0},                                       // 29
     {0, 0},                                       // 30
     {0, 0},                                       // 31
-    {K_GAMEPAD_DPAD_RIGHT, 0},                    // 32 I_PINGOUIN
-    {K_GAMEPAD_DPAD_DOWN, 0},                     // 33 I_JETPACK
-    {K_GAMEPAD_DPAD_UP, 0},                       // 34 I_PROTECTION
-    {K_GAMEPAD_DPAD_LEFT, 0},                     // 35 I_FOUDRE
+    // V2.8 (DC): I_PINGOUIN unbound from stick RIGHT (sequence-break-only spell,
+    // selectable via inventory). Stick RIGHT now drives I_ACTION_ALWAYS.
+    {0, 0},                                       // 32 I_PINGOUIN (was K_GAMEPAD_DPAD_RIGHT)
+    {K_GAMEPAD_DPAD_DOWN, 0},                     // 33 I_JETPACK    (kept — stick DOWN)
+    {K_GAMEPAD_DPAD_UP, 0},                       // 34 I_PROTECTION (kept — stick UP)
+    // V2.8 (DC): I_FOUDRE unbound from stick LEFT (sacrificed; selectable via
+    // inventory). Stick LEFT now secondary for I_RETURN.
+    {0, 0},                                       // 35 I_FOUDRE (was K_GAMEPAD_DPAD_LEFT)
 };
 
 /*══════════════════════════════════════════════════════════════════════════*
@@ -209,6 +233,22 @@ void ReadGamepadConfig(void) {
         JoystickDeadzone = 0;
     if (JoystickDeadzone > 32767)
         JoystickDeadzone = 32767;
+
+#ifdef LBA2_TARGET_DREAMCAST
+    // V2.9.4 (DC): always use compiled-in GamepadKeysDefault, ignore any
+    // values cached in LBA2.CFG from previous test runs. Reason: the DC build
+    // has no in-game UI to remap bindings, and changing the V2.8/V2.9.x
+    // defaults across builds left the previous mapping (e.g. A=I_CAMERA,
+    // B=I_RETURN) frozen in the CFG file on the user's VMU/disc cache,
+    // overriding the new defaults silently. Hard-coding defaults on DC is
+    // simpler than versioning the CFG schema, and since users can't remap
+    // anyway, no flexibility is lost.
+    for (S32 n = 0; n < MAX_INPUT; n++) {
+        GamepadKeys[n].Key1 = GamepadKeysDefault[n].Key1;
+        GamepadKeys[n].Key2 = GamepadKeysDefault[n].Key2;
+    }
+    return;
+#endif
 
     char id[32];
     for (S32 n = 0; n < MAX_INPUT; n++) {

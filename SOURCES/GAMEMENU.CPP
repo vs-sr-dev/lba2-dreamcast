@@ -18,8 +18,14 @@
 #include <dirent.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#ifdef LBA2_TARGET_DREAMCAST
+#include <dc/vmu_pkg.h>
+#include <dc/maple.h>
+#include <dc/maple/controller.h>
+#endif
 
 /*══════════════════════════════════════════════════════════════════════════*
  *══════════════════════════════════════════════════════════════════════════*/
@@ -635,6 +641,67 @@ S32 PlayerGameList(char **ptrlistname, char *listname, S32 flagnew) {
     char **startptrlist = ptrlistname;
     U8 wbyte;
 
+#ifdef LBA2_TARGET_DREAMCAST
+    // V2.9.1 (DC NVRAM): VMU listing via vmu_pkg format. Saves live under
+    // /vmu/a1/ as proper packages built by Save() in LOADSAVE.CPP. Read each,
+    // parse via vmu_pkg_parse, peek (numVersion, numCube, playerName) out of
+    // pkg.data. Dispalyed-name string returned to caller; caller's downstream
+    // FindPlayerFile(PlayerName) → GetSavePath → Save/Load handles mangle
+    // round-trip transparently.
+    {
+        char vmu_path[80];
+        dir = opendir("/vmu/a1");
+        if (dir != NULL) {
+            while ((file = readdir(dir)) != NULL) {
+                const char *dn = file->d_name;
+                if (strncmp(dn, "LBA2_", 5) != 0)  continue;
+                if (strcmp(dn, "LBA2_AUTO") == 0)  continue; // appended at end if present
+                if (strcmp(dn, "LBA2_CUR") == 0)   continue; // internal continue slot
+                snprintf(vmu_path, sizeof(vmu_path), "/vmu/a1/%s", dn);
+                FILE *fp = fopen(vmu_path, "rb");
+                if (!fp) continue;
+                if (fseek(fp, 0, SEEK_END) != 0) { fclose(fp); continue; }
+                long fs = ftell(fp);
+                if (fs <= 0) { fclose(fp); continue; }
+                if (fseek(fp, 0, SEEK_SET) != 0) { fclose(fp); continue; }
+                uint8_t *raw = (uint8_t *)malloc((size_t)fs);
+                if (!raw) { fclose(fp); continue; }
+                size_t r = fread(raw, 1, (size_t)fs, fp);
+                fclose(fp);
+                if ((long)r != fs) { free(raw); continue; }
+                vmu_pkg_t pkg;
+                if (vmu_pkg_parse(raw, (size_t)fs, &pkg) < 0) { free(raw); continue; }
+                if (pkg.data_len < 6) { free(raw); continue; }
+                const uint8_t *p = pkg.data;
+                wbyte = p[0]; (void)wbyte;
+                memcpy(&wlong, p + 1, 4); (void)wlong;
+                *ptrlistname++ = listname;
+                int j = 5;
+                while (j < pkg.data_len) {
+                    unsigned char c = p[j++];
+                    *listname++ = (char)c;
+                    if (c == 0) break;
+                }
+                if (listname[-1] != 0) *listname++ = 0; // terminate if data was malformed
+                free(raw);
+                nb++;
+                if (nb == MAX_PLAYER) return nb;
+            }
+            closedir(dir);
+        }
+        qsort((void *)startptrlist, nb, sizeof(char *), my_sort_function);
+        GetSavePath(pathname, ADELINE_MAX_PATH, AUTOSAVE_FILENAME);
+        if (!flagnew && nb < MAX_PLAYER && ExistsFileOrDir(pathname)) {
+            strcpy(GamePathname, pathname);
+            LoadGamePlayerName();
+            *ptrlistname = listname;
+            strcpy(listname, PlayerName);
+            nb++;
+        }
+        return nb;
+    }
+#endif
+
     GetSavePath(pathname, ADELINE_MAX_PATH, NULL);
     dir = opendir(pathname);
     if (dir != NULL) {
@@ -1010,7 +1077,140 @@ static S32 GameMenuSaveListHitTest(U32 mx, U32 my, S32 nb, S32 start, S32 *outSe
 
 // TODO(gamepad): uses GetAscii() (keyboard-only) — pure-gamepad users cannot enter
 // save/profile names. Needs an on-screen D-pad character grid to close the gap.
+#ifdef LBA2_TARGET_DREAMCAST
+// V2.9.2: DC soft keyboard — single-letter cycling input. Replaces ASCII
+// keyboard entry (which DC doesn't have via Maple). User cycles A-Z + 0-9
+// + space with stick/DPad LEFT/RIGHT; A button appends; B button backspaces;
+// X button confirms; START cancels.
+static const char DC_SK_ALPHABET[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ";
+#define DC_SK_ALPHABET_LEN ((int)(sizeof(DC_SK_ALPHABET) - 1))
+
+static S32 InputPlayerNameDC(S32 choice, char *name) {
+    char memoplayername[MAX_SIZE_PLAYER_NAME + 1];
+    S32 retval = FALSE;
+    S32 x, y;
+    S32 len;
+    int charIdx = 0;
+    uint32_t prevButtons = ~0u;   // first frame: edge-detect won't fire
+    int prevLeft = 0, prevRight = 0;
+    S32 navRepeatTimer = 0;
+
+    strncpy(memoplayername, name, MAX_SIZE_PLAYER_NAME);
+    memoplayername[MAX_SIZE_PLAYER_NAME] = 0;
+    strcpy(PlayerName, name);
+    FindPlayerFile();
+
+    if (strcasecmp(PlayerName, AUTOSAVE_NAME)
+        AND strcasecmp(PlayerName, CURRENTSAVE_NAME)
+        AND strcasecmp(PlayerName, "")
+            AND(ade_strcasestr(GamePathname, AUTOSAVE_FILENAME) == NULL)
+        AND(ade_strcasestr(GamePathname, CURRENTSAVE_FILENAME) == NULL)) {
+        strcpy(OldGamePathname, GamePathname);
+    }
+
+    len = strlen(PlayerName);
+    x = 320;
+    y = Y_START_CHOICE + choice * 60;
+    CursorActif = FALSE;
+
+    while (1) {
+        ManageTime();
+
+        maple_device_t *cont = maple_enum_type(0, MAPLE_FUNC_CONTROLLER);
+        if (!cont) {
+            BoxUpdate();
+            continue;
+        }
+        cont_state_t *st = (cont_state_t *)maple_dev_status(cont);
+        if (!st) {
+            BoxUpdate();
+            continue;
+        }
+
+        uint32_t btns = st->buttons;
+        uint32_t pressed = btns & ~prevButtons;
+        const int dz = 32;
+        int curLeft  = ((btns & CONT_DPAD_LEFT)  != 0) || (st->joyx < -dz);
+        int curRight = ((btns & CONT_DPAD_RIGHT) != 0) || (st->joyx >  dz);
+
+        // Letter cycling — rising edge advances immediately, then auto-repeat
+        // every ~150 ms (3 ticks at engine 20 Hz timer scale) while held.
+        int doLeft = 0, doRight = 0;
+        if (curLeft && !prevLeft) {
+            doLeft = 1;
+            navRepeatTimer = TimerRefHR + 6 * 20; // ~300 ms initial delay
+        } else if (curLeft && TimerRefHR >= navRepeatTimer) {
+            doLeft = 1;
+            navRepeatTimer = TimerRefHR + 2 * 20; // ~100 ms repeat
+        }
+        if (curRight && !prevRight) {
+            doRight = 1;
+            navRepeatTimer = TimerRefHR + 6 * 20;
+        } else if (curRight && TimerRefHR >= navRepeatTimer) {
+            doRight = 1;
+            navRepeatTimer = TimerRefHR + 2 * 20;
+        }
+        if (doLeft)  charIdx = (charIdx - 1 + DC_SK_ALPHABET_LEN) % DC_SK_ALPHABET_LEN;
+        if (doRight) charIdx = (charIdx + 1) % DC_SK_ALPHABET_LEN;
+
+        // A button — append current letter to name
+        if (pressed & CONT_A) {
+            if (len < MAX_SIZE_PLAYER_NAME - 1) {
+                PlayerName[len++] = DC_SK_ALPHABET[charIdx];
+                PlayerName[len] = 0;
+            }
+        }
+        // B button — backspace
+        if (pressed & CONT_B) {
+            if (len > 0) {
+                PlayerName[--len] = 0;
+            }
+        }
+        // X button — confirm save (if name non-empty and not a duplicate of
+        // an existing save other than the original we're editing)
+        if (pressed & CONT_X) {
+            if (len > 0
+                && (FindPlayerFile() == FALSE
+                    || !strcmp(PlayerName, memoplayername))) {
+                strcpy(name, PlayerName);
+                retval = TRUE;
+                break;
+            } else if (len > 0) {
+                PlayErrorSample();
+                strcpy(PlayerName, memoplayername);
+                len = strlen(PlayerName);
+            }
+        }
+        // START — cancel
+        if (pressed & CONT_START) {
+            strcpy(name, memoplayername);
+            strcpy(PlayerName, memoplayername);
+            retval = FALSE;
+            break;
+        }
+
+        // Render: name with current letter previewed at end
+        char display[MAX_SIZE_PLAYER_NAME + 8];
+        snprintf(display, sizeof(display), "%s[%c]", PlayerName, DC_SK_ALPHABET[charIdx]);
+        DrawOneString(x, y, display, 1);
+        DrawOneString(x, y + 30, "<- ->: cycle  A: add  B: back  X: OK  START: cancel", 0);
+        BoxUpdate();
+
+        prevButtons = btns;
+        prevLeft = curLeft;
+        prevRight = curRight;
+    }
+
+    WaitNoInput();
+    CursorActif = FALSE;
+    return retval;
+}
+#endif
+
 S32 InputPlayerName(S32 choice, char *name) {
+#ifdef LBA2_TARGET_DREAMCAST
+    return InputPlayerNameDC(choice, name);
+#endif
     char memoplayername[255];
     S32 flag = 1;
     S32 retval = FALSE;
@@ -1255,7 +1455,11 @@ S32 ChoosePlayerName(S32 mess, S32 flagflip, S32 flagnew) {
     save_prev_click = 0;
     mouse_fire = 0;
 
-    while (MyKey != K_ESC AND !(Input & I_MENUS)) {
+    while (MyKey != K_ESC AND !(Input & I_MENUS)
+#ifdef LBA2_TARGET_DREAMCAST
+           AND !CheckKey(K_GAMEPAD_B)  // V2.9.3 DC: B button closes save-list menu
+#endif
+           ) {
         ManageTime();
 
         if (flag == 3) {
@@ -1309,9 +1513,14 @@ S32 ChoosePlayerName(S32 mess, S32 flagflip, S32 flagnew) {
                 else
 #endif
                     FindPlayerFile();
+#ifndef LBA2_TARGET_DREAMCAST
+                // V2.9.2: skip per-selection save preview on DC (Maple bus
+                // VMU latency causes ~50-100 ms microfreeze per nav event).
+                // Cosmetic-only; selection itself still works.
                 ptr = LoadGameScreen();
                 if (ptr)
                     DrawScreenSave(ptr, 240, 50);
+#endif
             } else // Nouvelle partie
             {
                 //                                DrawCadreSave( 240, 50 ) ;
@@ -2458,6 +2667,14 @@ S32 DoGameMenu(U16 *ptrmenu) {
             DrawGameMenu(ptrmenu, FALSE);
 
             if (ptrmenu == GameMainMenu) {
+#ifdef LBA2_TARGET_DREAMCAST
+                // V2.9.2: skip the per-navigation save preview on DC. Each
+                // LoadGameScreen() call hits /vmu/a1/LBA2_CUR which on a real
+                // Maple bus costs ~50-100 ms even for a missing file (VMU FAT
+                // round-trip). The screenshot preview is purely cosmetic; the
+                // continue/load options still work via PlayerGameList +
+                // FindPlayerFile downstream.
+#else
                 U8 memonumversion = NumVersion;
                 char memoplayername[256];
                 char memogamepathname[256];
@@ -2476,6 +2693,7 @@ S32 DoGameMenu(U16 *ptrmenu) {
                 strcpy(PlayerName, memoplayername);
                 NumVersion = memonumversion;
                 NewCube = -1;
+#endif
             }
 
             if (FadeMenu) {
@@ -2535,6 +2753,23 @@ S32 DoGameMenu(U16 *ptrmenu) {
             }
         }
 
+#ifdef LBA2_TARGET_DREAMCAST
+        // V2.9.3 DC: confirm on X (I_ACTION_M) only. I_RETURN is excluded
+        // from confirm because it now fires when the player presses A — and
+        // A is meant to be a no-op-in-menu camera recenter. Close on B button
+        // via direct virtual-scancode check (B is intentionally unbound from
+        // engine slots so this CheckKey is the only consumer).
+        if (Input & I_ACTION_M OR MyKey == K_ENTER OR MyKey == K_NUMPAD_ENTER) {
+            WaitNoInput();
+            AsciiMode = FALSE;
+            return ptrmenu[4 + 1 + selected * 2]; // num mess
+        }
+
+        if (MyKey == K_ESC OR (Input & I_MENUS) OR CheckKey(K_GAMEPAD_B)) {
+            AsciiMode = FALSE;
+            return 1000;
+        }
+#else
         if (Input & I_RETURN OR Input & I_ACTION_M OR MyKey == K_ENTER OR MyKey == K_NUMPAD_ENTER) {
             WaitNoInput();
             AsciiMode = FALSE;
@@ -2547,6 +2782,7 @@ S32 DoGameMenu(U16 *ptrmenu) {
             AsciiMode = FALSE;
             return 1000;
         }
+#endif
 
 #ifdef DEBUG_TOOLS
         if (ptrmenu == GameMainMenu) {
@@ -2968,9 +3204,20 @@ void DrawCadreSave(S32 x, S32 y) {
 }
 
 /*──────────────────────────────────────────────────────────────────────────*/
+// V2.9.1 cache: IsExistSavedGame() is called from BuildGameMainMenu and other
+// menu-state-decision paths, potentially per frame while a menu is up. Each call
+// triggers PlayerGameList() which on DC opens every VMU file under /vmu/a1/ and
+// runs vmu_pkg_parse — slow enough to drop framerate from 60 to 55 in V2.9.
+// We cache the count and invalidate it when Save() runs (the only event that
+// can change "is there a save?"). InvalidateSavedGameCache() is exposed via
+// extern declaration in SAVEGAME.CPP's Save path.
+static S32 s_existSavedGameCache = -1;
+extern "C" void InvalidateSavedGameCache(void) { s_existSavedGameCache = -1; }
 S32 IsExistSavedGame(void) {
-    // a optimiser
-    return PlayerGameList((char **)BufSpeak, (char *)BufSpeak + 100000L, FALSE);
+    if (s_existSavedGameCache < 0) {
+        s_existSavedGameCache = PlayerGameList((char **)BufSpeak, (char *)BufSpeak + 100000L, FALSE);
+    }
+    return s_existSavedGameCache;
 }
 
 /*──────────────────────────────────────────────────────────────────────────*/

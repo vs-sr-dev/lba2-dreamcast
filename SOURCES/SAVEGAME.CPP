@@ -161,6 +161,13 @@ S32 SetDemoSaveGame(S32 num) {
 /*──────────────────────────────────────────────────────────────────────────*/
 // Version Jeu uniquement
 void AutoSaveGame() {
+#ifdef LBA2_TARGET_DREAMCAST
+    // V2.9.2 (DC): no automatic saves on Dreamcast. VMU writes are 1-5 KB/s
+    // flash — every autosave would freeze the game for several seconds. Player
+    // is expected to manually save from the menu instead, with the freeze
+    // happening only at explicit, user-initiated save points.
+    return;
+#endif
 #ifndef DEMO
     U8 memonumversion = NumVersion;
     char memoplayername[MAX_SIZE_PLAYER_NAME + 1];
@@ -213,6 +220,18 @@ void CurrentSaveGame() {
 
     if (DemoSlide OR PLAY_THE_END)
         return;
+
+#ifdef LBA2_TARGET_DREAMCAST
+    // V2.9.1 (DC): CurrentSaveGame is invoked on every Start/menu-open which
+    // on PC was a sub-millisecond hard-drive write — invisible. On DC the
+    // VMU is a 1-5 KB/s flash device, so the same call freezes the game for
+    // 6-7 seconds every time the user pauses. Disable the path entirely on
+    // DC; AutoSaveGame() on cube transition (with the visible "Saving..."
+    // UI the player expects to take time) covers the resume-after-shutdown
+    // case at acceptable cost. Players who want to lock in progress trigger
+    // a manual save from the menu (also slow but explicit).
+    return;
+#endif
 
     SaveTimer();
 
