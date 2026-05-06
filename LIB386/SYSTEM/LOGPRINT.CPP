@@ -56,6 +56,11 @@ void LogPrintf(const char *format, ...) {
 
     if (!QuietLog) {
         printf("%s", LogStr);
+#ifdef LBA2_TARGET_DREAMCAST
+        // KOS dbgio over serial isn't always line-flushed; force every Log line
+        // out so we can see exactly where the engine is when something hangs.
+        fflush(stdout);
+#endif
     }
 
     if (*LogName) {

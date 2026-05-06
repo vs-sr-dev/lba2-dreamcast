@@ -2,6 +2,10 @@
 
 #include <stdlib.h>
 
+#ifdef LBA2_TARGET_DREAMCAST
+#include <SYSTEM/LOGPRINT.H>
+#endif
+
 // -----------------------------------------------------------------------------
 #ifdef __cplusplus
 extern "C" {
@@ -14,9 +18,21 @@ extern "C" {
 void *NormMalloc(U32 size) {
     U64 addr, temp;
 
+#ifdef LBA2_TARGET_DREAMCAST
+    // Diagnostic — surface any single allocation > 4 MB on DC, where 16 MB
+    // total RAM means a few of these will starve everything else. Helps
+    // identify the call site of the V2.6 76 MB FMV-related OOM.
+    if (size > 4u * 1024u * 1024u) {
+        LogPrintf("Norm Malloc LARGE: %u bytes\n", (unsigned)size);
+    }
+#endif
+
     temp = (U64)malloc(size + MALLOC_ALIGN);
 
     if (!temp) {
+#ifdef LBA2_TARGET_DREAMCAST
+        LogPrintf("Norm Malloc FAILED: %u bytes\n", (unsigned)size);
+#endif
         return NULL;
     }
 

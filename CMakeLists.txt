@@ -19,14 +19,20 @@ else()
     enable_language(C CXX)
 endif()
 
-set(CMAKE_CXX_STANDARD 98)
+if(LBA2_TARGET_DREAMCAST)
+    # KOS headers (kos/irq.h, dc/pvr.h) need C++11+ for alignas / enum class.
+    # Codebase is written in C++98 style and is forward-compatible.
+    set(CMAKE_CXX_STANDARD 14)
+else()
+    set(CMAKE_CXX_STANDARD 98)
+endif()
 
 # Compilation options
 set(SOUND_BACKEND "sdl" CACHE STRING "Sound backend to be used")
 set(MVIDEO_BACKEND "smacker" CACHE STRING "Motion Video backend to be used")
 # Compilation options sanitization
 ## Sound backend
-set(SOUND_BACKEND_OPTIONS null miles sdl)
+set(SOUND_BACKEND_OPTIONS null miles sdl kos)
 set_property(CACHE SOUND_BACKEND PROPERTY STRINGS ${SOUND_BACKEND_OPTIONS})
 if (NOT SOUND_BACKEND IN_LIST SOUND_BACKEND_OPTIONS)
     message(SEND_ERROR "SOUND_BACKEND set with invalid option '${SOUND_BACKEND}'. Valid options are: ${SOUND_BACKEND_OPTIONS}")
@@ -52,7 +58,7 @@ endif()
 # Performance options
 option(LBA2_NATIVE_ARCH "Use -march=native for host-optimized build (not portable)" OFF)
 
-if(CMAKE_BUILD_TYPE STREQUAL "Release")
+if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT LBA2_TARGET_DREAMCAST)
     include(CheckIPOSupported)
     check_ipo_supported(RESULT ipo_supported OUTPUT ipo_error)
     if(ipo_supported)
@@ -71,7 +77,17 @@ if(LBA2_NATIVE_ARCH)
 endif()
 
 # Dependencies
-find_package(SDL3 REQUIRED CONFIG REQUIRED COMPONENTS SDL3-shared)
+if(NOT LBA2_TARGET_DREAMCAST)
+    find_package(SDL3 REQUIRED CONFIG REQUIRED COMPONENTS SDL3-shared)
+else()
+    # On Dreamcast there is no SDL3. Provide an empty INTERFACE target so the
+    # existing `target_link_libraries(... SDL3::SDL3)` calls in SVGA/SOURCES/CONSOLE
+    # remain syntactically valid; the actual SDL-using .CPP files are excluded
+    # from the build via per-CMakeLists guards instead.
+    if(NOT TARGET SDL3::SDL3)
+        add_library(SDL3::SDL3 INTERFACE IMPORTED)
+    endif()
+endif()
 
 # Engine version string. Reads the canonical value from the VERSION file
 # at the repo root and (optionally) appends -dirty when the working tree
