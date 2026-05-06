@@ -213,6 +213,21 @@ S32 NextMusicTimer;
 /*──────────────────────────────────────────────────────────────────────────*/
 #if defined(CDROM) && !defined(LBA_EDITOR)
 void InitTabTracks(void) {
+#if defined(LBA2_TARGET_DREAMCAST)
+    // V2.5+: PlayStream is a real (snd_stream + stb_vorbis on /cd/Music/)
+    // implementation now, so we keep TrackCDUS's JINGLE bits intact and let
+    // PlayMusic dispatch the original way:
+    //   JINGLE-flagged → PlayJingle → PlayStream → loop=0 (play once)
+    //   plain MUSIC    → PlayCD                  → loop=1 (continuous)
+    // This restores the 1997 chaining behavior where short stingers like
+    // jadpcm15..18 play once each and the engine queues the next via
+    // NextMusic / CheckNextMusic when GetMusic() reaches 0 between cubes.
+    // (Pre-V2.5 we stripped the JINGLE bits so PlayMusic → PlayCD always,
+    // because PlayStream was a no-op stub then.)
+    PtrTrackCD = TrackCDUS;
+    FirstCDTrack = FIRST_CD_TRACK_US;  // 0
+    return;
+#endif
     switch (DistribVersion) {
     case UNKNOWN_VERSION:
     case EA_VERSION:
