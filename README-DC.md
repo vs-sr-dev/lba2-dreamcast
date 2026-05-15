@@ -4,15 +4,17 @@ A native [KallistiOS](https://github.com/KallistiOS/KallistiOS) port of the
 **original 1997 Adeline source** of *Twinsen's Odyssey* / *Little Big Adventure 2*,
 released by 2:21 in 2024 ([upstream `lba2-classic-community`](https://github.com/2point21/lba2-classic-community)).
 
-> **Status: V0.9 — alpha.** The port has only been validated on the **opening
-> sequence and first transitions of the first island**. The rest of the game
-> has **not been played through**; further bugs are likely on later islands,
-> mini-games, vehicles, and late-game content.
+> **Status: V0.9 — alpha.** The **first island is playable to completion**
+> on Flycast (full story progression: all required scenes and transitions).
+> The **second island loads cleanly** and initial exploration works. Optional
+> side dialogs and zones were not exhaustively tested, but no regressions
+> were encountered on validated content. Later islands, vehicles, mini-games,
+> and the ending FMV remain unverified.
 
-The first-island content that *was* tested runs feature-complete on Flycast:
-intro FMV, music, dialog voices, save/load, and the full DC controller layout
-all work end-to-end. On real Dreamcast hardware, boot reaches the EA logo and
-then stalls — see *Known issues* below.
+On Flycast: intro FMV, music, dialog voices, save/load, and the full DC
+controller layout all work end-to-end across the validated scope. On real
+Dreamcast hardware, boot reaches the EA logo and then stalls — first UART
+capture has narrowed this to a render-side crash; see *Known issues* below.
 
 ## What works (validated on Flycast)
 
@@ -34,20 +36,33 @@ then stalls — see *Known issues* below.
 
 ## Known issues
 
-- **Real-Dreamcast blocker (high priority).** On real hardware the screen goes
-  black after the EA logo. Same code path runs cleanly on Flycast. Diagnosis
-  is awaiting a UART-USB serial cable; the boot path is already
-  breadcrumbed via `[DC-TRACE]` calls compiled in when
-  `-DLBA2_DEBUG_PERF=ON` is passed to CMake.
+- **Real-Dreamcast blocker (high priority, under diagnosis).** On real
+  hardware the screen goes black after the EA logo. First UART capture
+  obtained: boot reaches `KOS-AICA: snd_init OK`, then crashes with a
+  **Data address error (read)** during the first scene's render pass.
+  `addr2line` resolves the crash site to engine animation/object code
+  (`GereAnimAction` called from `DrawCube`), suggesting a wild pointer
+  reaching the `GET_S16`/`GET_S8` macros that walk packed scene data —
+  consistent with a load-side failure earlier (HQR allocation, asset
+  path, alignment) that doesn't fault on load but blows up on first
+  dereference. Flycast tolerates it; real DC doesn't. More UART traces
+  (with additional `LBA2_DC_TRACE` breadcrumbs in the scene-load path)
+  needed to narrow it further.
+- **Looping/continuous SFX persist past their source.** Some SFX that
+  should stop when their in-game source stops (notably the moving-platform
+  sound) keep playing until the scene changes. The engine likely fires
+  `StopSample(handle)` with the playback handle when the source stops,
+  but the KOS audio backend's handle-to-`snd_sfx`-channel mapping appears
+  not to honor that contract correctly. Audible on Flycast.
 - **Music start triple-stutter.** Every new music track starts with a brief
   three-step stutter before settling. Reproducible on Flycast and real DC;
   suspected AICA voice-register state leak from the previous stream end.
   Cosmetic, not blocking.
 - **Soft-keyboard hint overflow.** The input hint line (*"<- ->: cycle  A: add
   …"*) spills off both screen margins. Cosmetic.
-- **Untested past first island.** The full game has not been played through
-  on either Flycast or real hardware. Expect surprises on later islands,
-  vehicles, mini-games, and the ending FMV.
+- **Untested past second island.** No full playthrough has been performed.
+  Later islands, vehicles, mini-games, and the ending FMV have not been
+  validated; expect surprises.
 
 See [DEVLOG-DC.md](DEVLOG-DC.md) for the porting journey, traps, and
 technical notes.
